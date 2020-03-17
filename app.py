@@ -1,6 +1,8 @@
 import datetime
+import jwt
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
+from jwt import PyJWTError
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
@@ -48,26 +50,65 @@ def create_user():
 
 @app.route('/signin', methods=['POST'])
 def update_user():
-    return ''
+    data = request.get_json()
+
+    invalid_message = jsonify({'message': 'credentials doesn`t match'})
+
+    inputed_email = data['email']
+
+    if not inputed_email:
+        return invalid_message
+
+    salted_password = data['password'] + app.config['PWD_SECRET']
+
+    user = User.query.filter_by(email=inputed_email).first()
+
+    if not user:
+        return invalid_message
+
+    if check_password_hash(user.password, salted_password):
+        token = jwt.encode({'id': user.id, 'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=30)},
+                           app.config['JWT_SECRET'])
+        user.token = token
+        user.last_login = datetime.datetime.utcnow()
+        db.session.commit()
+        return jsonify({'token': token.decode('UTF-8')})
+
+    return invalid_message
 
 
-@app.route('/user', methods=['POST'])
+@app.route('/user', methods=['GET'])
 def get_all_users():
-    users = User.query.all()
-    output = []
+    token = None
+    if 'x-access-token' in request.headers:
+        token = request.headers['x-access-token']
+    if not token:
+        return jsonify({'message': 'Token is Missing'}), 401
 
-    for user in users:
-        user_phones = []
+    try:
+        data = jwt.decode(token, app.config['JWT_SECRET'])
+    except jwt.ExpiredSignatureError:
+        return jsonify({'message': 'Token is Expired.'}), 401
+    except jwt.InvalidTokenError:
+        return jsonify({'message': 'Token is Invalid.'}), 401
 
-        for user_phone in user.phones:
-            user_phone = {'ddd': user_phone.ddd, 'number': user_phone.number}
-            user_phones.append(user_phone)
+    current_user = User.query.filter_by(id=data['id']).first()
 
-        user_data = {'id': user.id, 'name': user.name, 'created_at': user.created_at, 'updated_at': user.updated_at,
-                     'last_login': user.last_login, 'phones': user_phones}
-        output.append(user_data)
+    if not current_user:
+        return jsonify({'message': 'User id is not valid'}), 401
 
-    return jsonify({'users': output})
+    current_user_phones = []
+
+    for user_phone in current_user.phones:
+        user_phone = {'ddd': user_phone.ddd, 'number': user_phone.number}
+        current_user_phones.append(user_phone)
+
+    user_data = {'id': current_user.id, 'name': current_user.name, 'created_at': current_user.created_at,
+                 'updated_at': current_user.updated_at,
+                 'last_login': current_user.last_login, 'phones': current_user_phones}
+
+
+    return jsonify(user_data)
 
 
 if __name__ == '__main__':
