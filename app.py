@@ -62,6 +62,12 @@ def all_exception_handler(error):
     return jsonify({'message': str(error.description)}), error.code
 
 
+@app.before_request
+def only_json():
+    if not request.is_json:
+        return jsonify({'message': 'The request needs to be in a json format'}), 400
+
+
 @app.route('/signup', methods=['POST'])
 def create_user():
     data = request.get_json()
